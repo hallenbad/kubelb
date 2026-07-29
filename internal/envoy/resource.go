@@ -120,6 +120,7 @@ func MapSnapshot(ctx context.Context, client ctrlclient.Client, loadBalancers []
 					}
 				}
 
+				experimentsOn := experimentEnabled(lb.Annotations)
 				switch lbEndpointPort.Protocol {
 				case corev1.ProtocolTCP:
 					listener = append(listener, makeTCPListener(key, key, port))
@@ -129,7 +130,7 @@ func MapSnapshot(ctx context.Context, client ctrlclient.Client, loadBalancers []
 				proxyProtocol := lbEndpointPort.Protocol == corev1.ProtocolTCP && lb.Annotations[kubelb.AnnotationProxyProtocol] == "v2"
 				cla := makeClusterLoadAssignment(key, lbEndpoints)
 				discoveryType := pickClusterDiscoveryType(lbEndpoint.Addresses)
-				cluster = append(cluster, makeCluster(key, lbEndpointPort.Protocol, "", proxyProtocol, lb.Annotations, discoveryType, cla))
+				cluster = append(cluster, makeCluster(key, lbEndpointPort.Protocol, "", proxyProtocol, lb.Annotations, experimentsOn, discoveryType, cla))
 				if discoveryType == envoyCluster.Cluster_EDS {
 					endpoints = append(endpoints, cla)
 				}
@@ -180,12 +181,13 @@ func MapSnapshot(ctx context.Context, client ctrlclient.Client, loadBalancers []
 
 				key := fmt.Sprintf(kubelb.EnvoyRoutePortIdentifierPattern, route.Namespace, svc.Namespace, svc.Name, originalRouteName, svc.UID, port.Port, port.Protocol)
 
+				experimentsOn := experimentEnabled(source.Route.GetAnnotations())
 				if l := makeRouteListener(key, listenerPort, port.Protocol, useHTTPListener); l != nil {
 					listener = append(listener, l)
 				}
 				cla := makeClusterLoadAssignment(key, lbEndpoints)
 				discoveryType := pickClusterDiscoveryType(routeAddresses)
-				cluster = append(cluster, makeCluster(key, port.Protocol, clusterRouteKind, false, source.Route.GetAnnotations(), discoveryType, cla))
+				cluster = append(cluster, makeCluster(key, port.Protocol, clusterRouteKind, false, source.Route.GetAnnotations(), experimentsOn, discoveryType, cla))
 				if discoveryType == envoyCluster.Cluster_EDS {
 					endpoints = append(endpoints, cla)
 				}
@@ -219,7 +221,7 @@ func MapSnapshot(ctx context.Context, client ctrlclient.Client, loadBalancers []
 	)
 }
 
-func makeCluster(clusterName string, protocol corev1.Protocol, routeKind string, proxyProtocol bool, annotations map[string]string, discoveryType envoyCluster.Cluster_DiscoveryType, loadAssignment *envoyEndpoint.ClusterLoadAssignment) *envoyCluster.Cluster {
+func makeCluster(clusterName string, protocol corev1.Protocol, routeKind string, proxyProtocol bool, annotations map[string]string, experimentsOn bool, discoveryType envoyCluster.Cluster_DiscoveryType, loadAssignment *envoyEndpoint.ClusterLoadAssignment) *envoyCluster.Cluster {
 	defaultHealthCheck := []*envoyCore.HealthCheck{
 		{
 			Timeout:            &durationpb.Duration{Seconds: defaultHealthCheckTimeoutSeconds},
@@ -233,7 +235,8 @@ func makeCluster(clusterName string, protocol corev1.Protocol, routeKind string,
 					// This will use empty payload to perform connect-only health check.
 					Send:    nil,
 					Receive: []*envoyCore.HealthCheck_Payload{},
-				}},
+				},
+			},
 		},
 	}
 
@@ -738,6 +741,13 @@ func isTLSBackend(route *kubelbv1alpha1.Route) bool {
 		return true
 	}
 	return strings.EqualFold(annotations["nginx.ingress.kubernetes.io/ssl-passthrough"], "true")
+}
+
+// experimentEnabled reports whether the poc.kubelb.k8c.io/experiment
+// annotation is set to true, gating POC-only behavior behind an explicit
+// opt-in on the given annotation map.
+func experimentEnabled(annotations map[string]string) bool {
+	return strings.EqualFold(annotations[kubelb.AnnotationExperiment], "true")
 }
 
 func getRouteKind(route *kubelbv1alpha1.Route) string {

@@ -62,7 +62,7 @@ func TestMakeCluster_ProxyProtocol(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cluster := makeCluster("test-cluster", corev1.ProtocolTCP, "", tt.proxyProtocol, nil, envoyCluster.Cluster_EDS, nil)
+			cluster := makeCluster("test-cluster", corev1.ProtocolTCP, "", tt.proxyProtocol, nil, false, envoyCluster.Cluster_EDS, nil)
 
 			if tt.wantTransport && cluster.TransportSocket == nil {
 				t.Error("expected TransportSocket to be set for proxy protocol v2")
@@ -322,7 +322,7 @@ func TestMakeCluster_DiscoveryType(t *testing.T) {
 	cla := makeClusterLoadAssignment("test-cluster", nil)
 
 	t.Run("EDS keeps EdsClusterConfig and no inline LoadAssignment", func(t *testing.T) {
-		c := makeCluster("test-cluster", corev1.ProtocolTCP, "", false, nil, envoyCluster.Cluster_EDS, cla)
+		c := makeCluster("test-cluster", corev1.ProtocolTCP, "", false, nil, false, envoyCluster.Cluster_EDS, cla)
 		if c.GetType() != envoyCluster.Cluster_EDS {
 			t.Errorf("type = %v, want EDS", c.GetType())
 		}
@@ -335,7 +335,7 @@ func TestMakeCluster_DiscoveryType(t *testing.T) {
 	})
 
 	t.Run("STRICT_DNS sets inline LoadAssignment and drops EdsClusterConfig", func(t *testing.T) {
-		c := makeCluster("test-cluster", corev1.ProtocolTCP, "", false, nil, envoyCluster.Cluster_STRICT_DNS, cla)
+		c := makeCluster("test-cluster", corev1.ProtocolTCP, "", false, nil, false, envoyCluster.Cluster_STRICT_DNS, cla)
 		if c.GetType() != envoyCluster.Cluster_STRICT_DNS {
 			t.Errorf("type = %v, want STRICT_DNS", c.GetType())
 		}
