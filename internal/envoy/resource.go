@@ -320,6 +320,11 @@ func makeCluster(clusterName string, protocol corev1.Protocol, routeKind string,
 				ExplicitHttpConfig: &protocolConfig,
 			},
 		}
+
+		if experimentEnabled(experimentsOn, annotations, ExperimentFlagRetryPolicy) {
+			httpOpts.RetryPolicy = &envoyRoute.RetryPolicy{}
+		}
+
 		cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{
 			envoyHTTPProtocolOptionsTypeURL: MustMarshalAny(httpOpts),
 		}
@@ -756,7 +761,8 @@ func isTLSBackend(route *kubelbv1alpha1.Route) bool {
 type ExperimentFlag string
 
 const (
-	ExperimentFlagHTTP2 ExperimentFlag = "poc.kubelb.k8c.io/use-http2"
+	ExperimentFlagHTTP2       ExperimentFlag = "poc.kubelb.k8c.io/use-http2"
+	ExperimentFlagRetryPolicy ExperimentFlag = "poc.kubelb.k8c.io/retry-policy-block"
 )
 
 // experimentEnabled reports whether the given flag is active: experimentsOn
