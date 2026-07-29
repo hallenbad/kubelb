@@ -129,7 +129,7 @@ func MapSnapshot(ctx context.Context, client ctrlclient.Client, loadBalancers []
 				proxyProtocol := lbEndpointPort.Protocol == corev1.ProtocolTCP && lb.Annotations[kubelb.AnnotationProxyProtocol] == "v2"
 				cla := makeClusterLoadAssignment(key, lbEndpoints)
 				discoveryType := pickClusterDiscoveryType(lbEndpoint.Addresses)
-				cluster = append(cluster, makeCluster(key, lbEndpointPort.Protocol, "", proxyProtocol, discoveryType, cla))
+				cluster = append(cluster, makeCluster(key, lbEndpointPort.Protocol, "", proxyProtocol, lb.Annotations, discoveryType, cla))
 				if discoveryType == envoyCluster.Cluster_EDS {
 					endpoints = append(endpoints, cla)
 				}
@@ -185,7 +185,7 @@ func MapSnapshot(ctx context.Context, client ctrlclient.Client, loadBalancers []
 				}
 				cla := makeClusterLoadAssignment(key, lbEndpoints)
 				discoveryType := pickClusterDiscoveryType(routeAddresses)
-				cluster = append(cluster, makeCluster(key, port.Protocol, clusterRouteKind, false, discoveryType, cla))
+				cluster = append(cluster, makeCluster(key, port.Protocol, clusterRouteKind, false, source.Route.GetAnnotations(), discoveryType, cla))
 				if discoveryType == envoyCluster.Cluster_EDS {
 					endpoints = append(endpoints, cla)
 				}
@@ -219,7 +219,7 @@ func MapSnapshot(ctx context.Context, client ctrlclient.Client, loadBalancers []
 	)
 }
 
-func makeCluster(clusterName string, protocol corev1.Protocol, routeKind string, proxyProtocol bool, discoveryType envoyCluster.Cluster_DiscoveryType, loadAssignment *envoyEndpoint.ClusterLoadAssignment) *envoyCluster.Cluster {
+func makeCluster(clusterName string, protocol corev1.Protocol, routeKind string, proxyProtocol bool, annotations map[string]string, discoveryType envoyCluster.Cluster_DiscoveryType, loadAssignment *envoyEndpoint.ClusterLoadAssignment) *envoyCluster.Cluster {
 	defaultHealthCheck := []*envoyCore.HealthCheck{
 		{
 			Timeout:            &durationpb.Duration{Seconds: defaultHealthCheckTimeoutSeconds},
@@ -300,13 +300,19 @@ func makeCluster(clusterName string, protocol corev1.Protocol, routeKind string,
 			envoyHTTPProtocolOptionsTypeURL: MustMarshalAny(httpOpts),
 		}
 	} else if IsHTTPRoute(routeKind) {
+		var protocolConfig envoyUpstreams.HttpProtocolOptions_ExplicitHttpConfig
+		if strings.EqualFold(annotations[kubelb.AnnotationUseHTTP2], "true") {
+			protocolConfig.ProtocolConfig = &envoyUpstreams.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{
+				Http2ProtocolOptions: &envoyCore.Http2ProtocolOptions{},
+			}
+		} else {
+			protocolConfig.ProtocolConfig = &envoyUpstreams.HttpProtocolOptions_ExplicitHttpConfig_HttpProtocolOptions{
+				HttpProtocolOptions: &envoyCore.Http1ProtocolOptions{},
+			}
+		}
 		httpOpts := &envoyUpstreams.HttpProtocolOptions{
 			UpstreamProtocolOptions: &envoyUpstreams.HttpProtocolOptions_ExplicitHttpConfig_{
-				ExplicitHttpConfig: &envoyUpstreams.HttpProtocolOptions_ExplicitHttpConfig{
-					ProtocolConfig: &envoyUpstreams.HttpProtocolOptions_ExplicitHttpConfig_HttpProtocolOptions{
-						HttpProtocolOptions: &envoyCore.Http1ProtocolOptions{},
-					},
-				},
+				ExplicitHttpConfig: &protocolConfig,
 			},
 		}
 		cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{
