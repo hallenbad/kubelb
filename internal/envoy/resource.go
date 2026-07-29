@@ -120,7 +120,7 @@ func MapSnapshot(ctx context.Context, client ctrlclient.Client, loadBalancers []
 					}
 				}
 
-				experimentsOn := experimentEnabled(lb.Annotations)
+				experimentsOn := hasAnnotation(lb.Annotations, kubelb.AnnotationExperiment)
 				switch lbEndpointPort.Protocol {
 				case corev1.ProtocolTCP:
 					listener = append(listener, makeTCPListener(key, key, port))
@@ -181,7 +181,7 @@ func MapSnapshot(ctx context.Context, client ctrlclient.Client, loadBalancers []
 
 				key := fmt.Sprintf(kubelb.EnvoyRoutePortIdentifierPattern, route.Namespace, svc.Namespace, svc.Name, originalRouteName, svc.UID, port.Port, port.Protocol)
 
-				experimentsOn := experimentEnabled(source.Route.GetAnnotations())
+				experimentsOn := hasAnnotation(source.Route.GetAnnotations(), kubelb.AnnotationExperiment)
 				if l := makeRouteListener(key, listenerPort, port.Protocol, useHTTPListener); l != nil {
 					listener = append(listener, l)
 				}
@@ -304,15 +304,17 @@ func makeCluster(clusterName string, protocol corev1.Protocol, routeKind string,
 		}
 	} else if IsHTTPRoute(routeKind) {
 		var protocolConfig envoyUpstreams.HttpProtocolOptions_ExplicitHttpConfig
-		if strings.EqualFold(annotations[kubelb.AnnotationUseHTTP2], "true") {
+		protocolConfig.ProtocolConfig = &envoyUpstreams.HttpProtocolOptions_ExplicitHttpConfig_HttpProtocolOptions{
+			HttpProtocolOptions: &envoyCore.Http1ProtocolOptions{},
+		}
+
+		// HTTP2 Experiment
+		if experimentEnabled(experimentsOn, annotations, ExperimentFlagHTTP2) {
 			protocolConfig.ProtocolConfig = &envoyUpstreams.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{
 				Http2ProtocolOptions: &envoyCore.Http2ProtocolOptions{},
 			}
-		} else {
-			protocolConfig.ProtocolConfig = &envoyUpstreams.HttpProtocolOptions_ExplicitHttpConfig_HttpProtocolOptions{
-				HttpProtocolOptions: &envoyCore.Http1ProtocolOptions{},
-			}
 		}
+
 		httpOpts := &envoyUpstreams.HttpProtocolOptions{
 			UpstreamProtocolOptions: &envoyUpstreams.HttpProtocolOptions_ExplicitHttpConfig_{
 				ExplicitHttpConfig: &protocolConfig,
@@ -710,6 +712,11 @@ func makeRouteListener(key string, listenerPort uint32, protocol corev1.Protocol
 	return nil
 }
 
+// hasAnnotation reports whether annotations[key] is set to "true".
+func hasAnnotation(annotations map[string]string, key string) bool {
+	return strings.EqualFold(annotations[key], "true")
+}
+
 // isTLSBackend reports whether the upstream for this Route is expected to
 // receive raw TLS traffic from the L7 proxy in front of kubelb. When true,
 // kubelb must use a TCP passthrough listener so the TLS handshake reaches
@@ -743,11 +750,23 @@ func isTLSBackend(route *kubelbv1alpha1.Route) bool {
 	return strings.EqualFold(annotations["nginx.ingress.kubernetes.io/ssl-passthrough"], "true")
 }
 
-// experimentEnabled reports whether the poc.kubelb.k8c.io/experiment
-// annotation is set to true, gating POC-only behavior behind an explicit
-// opt-in on the given annotation map.
-func experimentEnabled(annotations map[string]string) bool {
-	return strings.EqualFold(annotations[kubelb.AnnotationExperiment], "true")
+// ExperimentFlag identifies a single POC-only cluster behavior, each backed
+// by its own annotation key. Add an entry to experimentFlagAnnotations
+// whenever a new flag is introduced here.
+type ExperimentFlag string
+
+const (
+	ExperimentFlagHTTP2 ExperimentFlag = "poc.kubelb.k8c.io/use-http2"
+)
+
+// experimentEnabled reports whether the given flag is active: experimentsOn
+// is the general enabler (gates all experiments at once) and must be true,
+// and the flag's corresponding annotation must be set to true in annotations.
+func experimentEnabled(experimentsOn bool, annotations map[string]string, flag ExperimentFlag) bool {
+	if !experimentsOn {
+		return false
+	}
+	return hasAnnotation(annotations, string(flag))
 }
 
 func getRouteKind(route *kubelbv1alpha1.Route) string {
